@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/syndtr/goleveldb/leveldb"
+	ldbiterator "github.com/syndtr/goleveldb/leveldb/iterator"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	"github.com/syndtr/goleveldb/leveldb/util"
 )
@@ -39,13 +40,13 @@ type BaseDB interface {
 	// until a final write is called.
 	NewBatch() Batch
 
-	// NewIterator creates a binary-alphabetical iterator over a subset
+	// newIterator creates a binary-alphabetical iterator over a subset
 	// of database content with a particular key prefix, starting at a particular
 	// initial key (or after, if it does not exist).
 	//
 	// Note: This method assumes that the prefix is NOT part of the start, so there's
 	// no need for the caller to prepend the prefix to the start
-	NewIterator(prefix []byte, start []byte) Iterator
+	NewIterator(prefix []byte, start []byte) ldbiterator.Iterator
 
 	// Stat returns a particular internal stat of the database.
 	Stat(property string) (string, error)
@@ -58,6 +59,15 @@ type BaseDB interface {
 	// is treated as a key after all keys in the data store. If both is nil then it
 	// will compact entire data store.
 	Compact(start []byte, limit []byte) error
+
+	// Close closes the DB. This will also release any outstanding snapshot,
+	// abort any in-flight compaction and discard open transaction.
+	//
+	// Note:
+	// It is not safe to close a DB until all outstanding iterators are released.
+	// It is valid to call Close multiple times.
+	// Other methods should not be called after the DB has been closed.
+	Close() error
 }
 
 // NewDefaultBaseDB creates new instance of BaseDB with default options.
@@ -120,10 +130,12 @@ func (db *baseDB) NewBatch() Batch {
 	return newBatch(db.backend)
 }
 
-func (db *baseDB) NewIterator(prefix []byte, start []byte) Iterator {
+// newIterator returns iterator which iterates over values depending on the prefix.
+// Note: If prefix is nil, everything is iterated.
+func (db *baseDB) NewIterator(prefix []byte, start []byte) ldbiterator.Iterator {
 	r := util.BytesPrefix(prefix)
 	r.Start = append(r.Start, start...)
-	return db.backend.NewIterator(r, nil)
+	return db.backend.NewIterator(r, db.ro)
 }
 
 func (db *baseDB) Stat(property string) (string, error) {
